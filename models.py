@@ -1,3 +1,5 @@
+import pdb
+
 from utils.google_utils import *
 from utils.layers import *
 from utils.parse_config import *
@@ -289,6 +291,7 @@ class Darknet(nn.Module):
             elif name == 'YOLOLayer':
                 yolo_out.append(module(x, out))
             else:  # run module directly, i.e. mtype = 'convolutional', 'upsample', 'maxpool', 'batchnorm2d' etc.
+                # pdb.set_trace()
                 x = module(x)
 
             out.append(x if self.routs[i] else [])

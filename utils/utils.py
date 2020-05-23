@@ -18,6 +18,12 @@ from tqdm import tqdm
 
 from . import torch_utils  # , google_utils
 
+try:
+    import qtorch
+    from qtorch.quant import float_quantize
+except:
+    raise ImportError("QPyTorch not available")
+
 # Set printoptions
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
 np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format})  # format short g, %precision=5
@@ -416,7 +422,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
             if model.nc > 1:  # cls loss (only if multiple classes)
                 t = torch.full_like(ps[:, 5:], cn)  # targets
                 t[range(nb), tcls[i]] = cp
-                lcls += BCEcls(ps[:, 5:], t)  # BCE
+                lcls += BCEcls(ps[:, 5:], t) # BCE
                 # lcls += CE(ps[:, 5:], tcls[i])  # CE
 
             # Append targets to text file

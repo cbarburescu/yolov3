@@ -1,5 +1,6 @@
 import argparse
 import json
+import pdb
 
 from torch.utils.data import DataLoader
 
@@ -86,7 +87,9 @@ def test(cfg,
         with torch.no_grad():
             # Run model
             t = torch_utils.time_synchronized()
+            # pdb.set_trace()
             inf_out, train_out = model(imgs, augment=augment)  # inference and training outputs
+            # train_out = model(imgs, augment=augment)  # inference and training outputs
             t0 += torch_utils.time_synchronized() - t
 
             # Compute loss
