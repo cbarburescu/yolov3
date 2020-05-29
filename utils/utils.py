@@ -1,6 +1,7 @@
 import glob
 import math
 import os
+import pdb
 import random
 import shutil
 import subprocess
@@ -52,6 +53,38 @@ def load_classes(path):
     with open(path, 'r') as f:
         names = f.read().split('\n')
     return list(filter(None, names))  # filter removes empty strings (such as last line)
+
+
+def quant_hyp_hr(quant_hyp):
+    ret = {}
+
+    # pdb.set_trace()
+    for k, v in quant_hyp.items():
+        if k == "loss":
+            ek = k
+            ev = ''
+            for kk, vv in v.items():
+                ek += f"_{kk}"
+                ev = vv
+        elif k == "layers":
+            ek = k
+            ev = ''
+            for kk, vv in v.items():
+                for vvv in vv:
+                    ev += f"{str(vvv)}-"
+            ev = ev.strip("-")
+        else:
+            ek = k
+            ev = '1'
+            for kk, vv in v.items():
+                if isinstance(vv, int) or isinstance(vv, float):
+                    ev += f'-{vv}'
+                else:
+                    ev += f'-{vv[:4]}'
+
+        ret[ek] = ev
+
+    return ret
 
 
 def labels_to_class_weights(labels, nc=80):
@@ -379,6 +412,7 @@ def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#iss
 
 
 def compute_loss(p, targets, model):  # predictions, targets, model
+    # pdb.set_trace()
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
     lcls, lbox, lobj = ft([0]), ft([0]), ft([0])
     tcls, tbox, indices, anchor_vec = build_targets(p, targets, model)

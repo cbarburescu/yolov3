@@ -1,73 +1,44 @@
+
 import argparse
+import datetime
+import json
 import pdb
+import test  # import test.py to get mAP after each epoch
+from copy import deepcopy
 
 import torch.distributed as dist
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
+from apex import amp
+from qtorch import FloatingPoint
+from qtorch.auto_low import lower, sequential_lower
+from qtorch.optim import OptimLP
+from qtorch.quant import float_quantize
 from torch.utils.tensorboard import SummaryWriter
 
-import test  # import test.py to get mAP after each epoch
 from models import *
 from utils.datasets import *
+from utils.plot_activations import sequential_plot_activations
 from utils.utils import *
 
-mixed_precision = True
-try:  # Mixed precision training https://github.com/NVIDIA/apex
-    from apex import amp
-except:
-    print('Apex recommended for faster mixed precision training: https://github.com/NVIDIA/apex')
-    mixed_precision = False  # not installed
-
-
-qpytorch = True
-try:
-    import qtorch
-    from qtorch.quant import float_quantize
-    from qtorch.auto_low import sequential_lower, lower
-    from qtorch.optim import OptimLP
-except:
-    raise ImportError("QPyTorch not available")
-    qpytorch = False
 
 wdir = 'weights' + os.sep  # weights dir
 last = wdir + 'last.pt'
 best = wdir + 'best.pt'
 results_file = 'results.txt'
 
-# Hyperparameters
-hyp = {'giou': 3.54,  # giou loss gain
-       'cls': 37.4,  # cls loss gain
-       'cls_pw': 1.0,  # cls BCELoss positive_weight
-       'obj': 64.3,  # obj loss gain (*=img_size/320 if img_size != 320)
-       'obj_pw': 1.0,  # obj BCELoss positive_weight
-       'iou_t': 0.20,  # iou training threshold
-       'lr0': 1e-4,  # initial learning rate (SGD=5E-3, Adam=5E-4)
-       'lrf': 5e-6,  # final learning rate (with cos scheduler)
-       'momentum': 0,  # SGD momentum
-       'nesterov': False,
-       'weight_decay': 0.000484,  # optimizer weight decay
-       'fl_gamma': 0.0,  # focal loss gamma (efficientDet default is gamma=1.5)
-       'hsv_h': 0.0138,  # image HSV-Hue augmentation (fraction)
-       'hsv_s': 0.678,  # image HSV-Saturation augmentation (fraction)
-       'hsv_v': 0.36,  # image HSV-Value augmentation (fraction)
-       'degrees': 1.98 * 0,  # image rotation (+/- deg)
-       'translate': 0.05 * 0,  # image translation (+/- fraction)
-       'scale': 0.05 * 0,  # image scale (+/- gain)
-       'shear': 0.641 * 0}  # image shear (+/- deg)
+# # Overwrite hyp with hyp*.txt (optional)
+# f = glob.glob('hyp*.txt')
+# if f:
+#     print('Using %s' % f[0])
+#     for k, v in zip(hyp.keys(), np.loadtxt(f[0])):
+#         hyp[k] = v
 
-# Overwrite hyp with hyp*.txt (optional)
-f = glob.glob('hyp*.txt')
-if f:
-    print('Using %s' % f[0])
-    for k, v in zip(hyp.keys(), np.loadtxt(f[0])):
-        hyp[k] = v
+# # Print focal loss if gamma > 0
+# if hyp['fl_gamma']:
+#     print('Using FocalLoss(gamma=%g)' % hyp['fl_gamma'])
 
-# Print focal loss if gamma > 0
-if hyp['fl_gamma']:
-    print('Using FocalLoss(gamma=%g)' % hyp['fl_gamma'])
-
-
-def train(hyp):
+def train(hyp, quant_hyp=None):
     cfg = opt.cfg
     data = opt.data
     epochs = opt.epochs  # 500200 batches at bs 64, 117263 images = 273 epochs
@@ -106,10 +77,6 @@ def train(hyp):
 
     # Initialize model
     model = Darknet(cfg).to(device)
-
-    # Optimizer
-    optimizer = optim.SGD(
-        model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
 
     # pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
     # for k, v in dict(model.named_parameters()).items():
@@ -170,29 +137,55 @@ def train(hyp):
         # possible weights are '*.weights', 'yolov3-tiny.conv.15',  'darknet53.conv.74' etc.
         load_darknet_weights(model, weights)
 
+    # Optimizer
+    if not opt.quant:
+        # if tb_writer:
+        #     model = sequential_plot_activations(model, tb_writer.add_histogram, layer_types=["conv", "activation"])
+        optimizer = optim.SGD(
+            model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
+
     # HFP8
-    if opt.hfp8:
-        # Model
-        forward_num = qtorch.FloatingPoint(exp=4, man=3)
-        backward_num = qtorch.FloatingPoint(exp=5, man=2)
+    if opt.quant:
         # pdb.set_trace()
+        assert quant_hyp is not None, 'Hyps file must have quant_hyps dict in order to train in low-precision'
+        tb_quant_hyp = deepcopy(quant_hyp)
+        forward_rounding = quant_hyp["forward"].pop("rounding")
+        backward_rounding = quant_hyp["backward"].pop("rounding")
+        # Model
+        forward_num = FloatingPoint(**quant_hyp["forward"])
+        backward_num = FloatingPoint(**quant_hyp["backward"])
+        except_layers = quant_hyp["layers"].get("except", [])
         model = sequential_lower(model,
-                                layer_types=["conv", "activation", "normalization"],
-                                forward_number=forward_num,
-                                forward_rounding="nearest",
-                                backward_number=backward_num,
-                                backward_rounding="nearest",
-                                )
+                                 layer_types=quant_hyp["layers"]["quant"],
+                                 except_layers=except_layers,
+                                 forward_number=forward_num,
+                                 forward_rounding=forward_rounding,
+                                 backward_number=backward_num,
+                                 backward_rounding=backward_rounding,
+                                 )
+        
+        # Add histogram plotter for forward
+        # if tb_writer:
+        #     pdb.set_trace()
+        #     model = sequential_plot_activations(model, tb_writer.add_histogram, layer_types=["quant"])
+
+        # Amp
+        if isinstance(quant_hyp["loss"]["scale"], str) and "dynamic" in quant_hyp["loss"]["scale"]:
+            opt.amp = True
 
         # Optimizer
+        grad_scaling = quant_hyp["grad"].pop("scale")
+        if isinstance(grad_scaling, str):
+            grad_scaling = 1
+
         def weight_quant(x):
-            return float_quantize(x, exp=4, man=3, rounding="nearest")
+            return float_quantize(x, **quant_hyp["weight"])
 
         def gradient_quant(x):
-            return float_quantize(x, exp=5, man=2, rounding="nearest")
+            return float_quantize(x, **quant_hyp["grad"])
 
-        def acc_quant(x):
-            return float_quantize(x, exp=4, man=3, rounding="nearest")
+        acc_quant = (lambda x: float_quantize(x, **quant_hyp["acc"])) if quant_hyp.get("acc") is not None else None
+        mom_quant = (lambda x: float_quantize(x, **quant_hyp["mom"])) if quant_hyp.get("mom") is not None else None
 
         # Optimizer
         optimizer = optim.SGD(
@@ -200,11 +193,12 @@ def train(hyp):
         optimizer = OptimLP(optimizer,
                             weight_quant=weight_quant,
                             grad_quant=gradient_quant,
+                            grad_scaling=grad_scaling,
+                            momentum_quant=mom_quant,
                             acc_quant=acc_quant)
-
-        if mixed_precision:
+        if opt.amp:
             model, optimizer = amp.initialize(
-                    model, optimizer, opt_level='O0', loss_scale="dynamic")
+                model, optimizer, opt_level='O0', loss_scale="dynamic")
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
 
@@ -272,7 +266,7 @@ def train(hyp):
         dataset.labels, nc).to(device)  # attach class weights
 
     # Model EMA
-    ema = torch_utils.ModelEMA(model)
+    # ema = torch_utils.ModelEMA(model)
 
     # Start training
     nb = len(dataloader)  # number of batches
@@ -341,24 +335,32 @@ def train(hyp):
             # Forward
             pred = model(imgs)
 
+            # Zero grad
+            optimizer.zero_grad()
+            
             # Loss
             loss, loss_items = compute_loss(pred, targets, model)
             if not torch.isfinite(loss):
                 print('WARNING: non-finite loss, ending training ', loss_items)
                 return results
 
-            # Backward
-            # loss *= batch_size / 64  # scale loss
-            if opt.hfp8 and mixed_precision:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
+            # Backward + optimize
+            if opt.quant:
+                if opt.amp:
+                    with amp.scale_loss(loss, optimizer, delay_unscale=True) as loss__scale:
+                        scaled_loss, loss_scale = loss__scale
+                        scaled_loss.backward()
+                        optimizer.step(loss_scale=loss_scale)
+                else:
+                    loss *= quant_hyp["loss"]["scale"]  # scale loss
+                    loss.backward()
+                    optimizer.step()
             else:
                 loss.backward()
+                optimizer.step()
 
             # Optimize
             # if ni % accumulate == 0:
-            optimizer.step()
-            optimizer.zero_grad()
             # ema.update(model)
 
             # Print
@@ -380,21 +382,22 @@ def train(hyp):
 
                     # tb_writer.add_graph(model, imgs)  # add model to tensorboard
 
-            if i % 1000 == 0:
+            if ni % 1000 == 0:
                 # pdb.set_trace()
                 for name, param in model.named_parameters():
-                    name_split = name.split(".")
-                    layer_idx = name_split[1]
-                    param_type = ".".join(name_split[-2:])
-                    tb_writer.add_histogram(f"EP{epoch} ST{i} {param_type}", param, layer_idx)
+                    hist_name = ".".join(name.split(".")[1:])
+                    grad_hist_name = f"{hist_name}_grad"
+                    tb_writer.add_histogram(hist_name, param, ni)
+                    tb_writer.add_histogram(grad_hist_name, param.grad, ni)
 
             # end batch ------------------------------------------------------------------------------------------------
+            # break
 
         # Update scheduler
         scheduler.step()
 
         # Process epoch results
-        ema.update_attr(model)
+        # ema.update_attr(model)
         final_epoch = epoch + 1 == epochs
         if not opt.notest or final_epoch:  # Calculate mAP
             is_coco = any([x in data for x in [
@@ -403,7 +406,8 @@ def train(hyp):
                                       data,
                                       batch_size=batch_size,
                                       img_size=imgsz_test,
-                                      model=ema.ema,
+                                      #   model=ema.ema,
+                                      model=model,
                                       save_json=final_epoch and is_coco,
                                       single_cls=opt.single_cls,
                                       dataloader=testloader)
@@ -424,6 +428,14 @@ def train(hyp):
             for x, tag in zip(list(mloss[:-1]) + list(results), tags):
                 tb_writer.add_scalar(tag, x, epoch)
 
+            # Write hparams w/ metrics
+            hyp_tb = deepcopy(hyp)
+            if opt.quant:
+                hyp_tb.update(quant_hyp_hr(tb_quant_hyp))
+            hyp_m = {k: v for k, v in zip(tags[-7:], list(results))}
+            # pdb.set_trace()
+            tb_writer.add_hparams(hyp_tb, hyp_m)
+
         # Update best mAP
         # fitness_i = weighted combination of [P, R, mAP, F1]
         fi = fitness(np.array(results).reshape(1, -1))
@@ -437,7 +449,8 @@ def train(hyp):
                 chkpt = {'epoch': epoch,
                          'best_fitness': best_fitness,
                          'training_results': f.read(),
-                         'model': ema.ema.module.state_dict() if hasattr(model, 'module') else ema.ema.state_dict(),
+                         #  'model': ema.ema.module.state_dict() if hasattr(model, 'module') else ema.ema.state_dict(),
+                         'model': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
                          'optimizer': None if final_epoch else optimizer.state_dict()}
 
             # Save last, best and delete
@@ -462,11 +475,11 @@ def train(hyp):
                 os.system('gsutil cp %s gs://%s/weights' % (f2, opt.bucket)
                           ) if opt.bucket and ispt else None  # upload
 
-    if not opt.evolve:
-        plot_results()  # save as results.png
+    # if not opt.evolve:
+    #     plot_results()  # save as results.png
     print('%g epochs completed in %.3f hours.\n' %
           (epoch - start_epoch + 1, (time.time() - t0) / 3600))
-    dist.destroy_process_group() if torch.cuda.device_count() > 1 else None
+    # dist.destroy_process_group() if torch.cuda.device_count() > 1 else None
     torch.cuda.empty_cache()
     return results
 
@@ -479,6 +492,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--cfg', type=str,
                         default='cfg/yolov3-spp.cfg', help='*.cfg path')
+    parser.add_argument('--hyps', type=str,
+                        default='hyps/fp32_1.py', help='py file with dict containing hyperparameters')
     parser.add_argument('--data', type=str,
                         default='data/coco2017.data', help='*.data path')
     parser.add_argument('--multi-scale', action='store_true',
@@ -509,27 +524,39 @@ if __name__ == '__main__':
     parser.add_argument('--single-cls', action='store_true',
                         help='train as single-class dataset')
     # https://papers.nips.cc/paper/8736-hybrid-8-bit-floating-point-hfp8-training-and-inference-for-deep-neural-networks
-    parser.add_argument('--hfp8', action='store_true',
-                        help='train using HFP8 format')
+    parser.add_argument('--quant', action='store_true',
+                        help='train in low precision. Specific hyperparamerters are set in quant_hyp')
+    parser.add_argument('--amp', action='store_true',
+                        help='use apex for dynamic loss scaling')
     opt = parser.parse_args()
     opt.weights = last if opt.resume else opt.weights
-    check_git_status()
+    # check_git_status()
     print(opt)
     # extend to 3 sizes (min, max, test)
     opt.img_size.extend([opt.img_size[-1]] * (3 - len(opt.img_size)))
+    # pdb.set_trace()
     device = torch_utils.select_device(
-        opt.device, apex=mixed_precision, batch_size=opt.batch_size)
+        opt.device, apex=opt.amp, batch_size=opt.batch_size)
     if device.type == 'cpu':
-        mixed_precision = False
+        opt.amp = False
 
     # scale hyp['obj'] by img_size (evolved at 320)
     # hyp['obj'] *= opt.img_size[0] / 320.
 
+    with open(opt.hyps) as hyps_file:
+        hyps = eval(hyps_file.read())
+        hyp = hyps["hyp"]
+        if hyps.get("quant_hyp") is not None:
+            quant_hyp = hyps["quant_hyp"]
+        else:
+            quant_hyp = None
+
     tb_writer = None
     if not opt.evolve:  # Train normally
         print('Start Tensorboard with "tensorboard --logdir=runs", view at http://localhost:6006/')
-        tb_writer = SummaryWriter(comment=opt.name)
-        train(hyp)  # train normally
+        tb_writer = SummaryWriter(
+            log_dir=f'runs/{datetime.datetime.now().strftime(r"%m-%d_%H:%M:%S")}__{opt.name}')
+        train(hyp, quant_hyp)  # train normally
 
     else:  # Evolve hyperparameters (optional)
         opt.notest, opt.nosave = True, True  # only test/save final epoch
