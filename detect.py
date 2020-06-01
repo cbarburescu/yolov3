@@ -1,5 +1,7 @@
 import argparse
+import pdb
 
+from utils.quant import quant
 from models import *  # set ONNX_EXPORT in models.py
 from utils.datasets import *
 from utils.utils import *
@@ -18,6 +20,13 @@ def detect(save_img=False):
 
     # Initialize model
     model = Darknet(opt.cfg, img_size)
+
+    # Quantize model
+    pdb.set_trace()
+    if opt.quant:
+        with open(opt.hyps) as hyps_file:
+            quant_hyp = eval(hyps_file.read())['quant_hyp']
+        model = quant(quant_hyp, model)
 
     # Load weights
     attempt_download(weights)
@@ -180,8 +189,13 @@ if __name__ == '__main__':
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class')
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
+    parser.add_argument('--quant', action='store_true', help='Quantize using quant module')
+    parser.add_argument('--hyps', help='Hyps file with quant configuration')
     opt = parser.parse_args()
     print(opt)
+
+    if opt.quant and opt.hyps is None:
+        raise ValueError("You must specify a hyps file in order to run a quantized inference")
 
     with torch.no_grad():
         detect()

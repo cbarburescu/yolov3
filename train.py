@@ -9,18 +9,13 @@ from copy import deepcopy
 import torch.distributed as dist
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
-from apex import amp
-from qtorch import FloatingPoint
-from qtorch.auto_low import lower, sequential_lower
-from qtorch.optim import OptimLP
-from qtorch.quant import float_quantize
 from torch.utils.tensorboard import SummaryWriter
 
+from utils.quant import quant
 from models import *
 from utils.datasets import *
 from utils.plot_activations import sequential_plot_activations
 from utils.utils import *
-
 
 wdir = 'weights' + os.sep  # weights dir
 last = wdir + 'last.pt'
@@ -77,6 +72,10 @@ def train(hyp, quant_hyp=None):
 
     # Initialize model
     model = Darknet(cfg).to(device)
+
+    # Optimizer
+    optimizer = optim.SGD(
+        model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
 
     # pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
     # for k, v in dict(model.named_parameters()).items():
@@ -137,68 +136,17 @@ def train(hyp, quant_hyp=None):
         # possible weights are '*.weights', 'yolov3-tiny.conv.15',  'darknet53.conv.74' etc.
         load_darknet_weights(model, weights)
 
-    # Optimizer
-    if not opt.quant:
-        # if tb_writer:
-        #     model = sequential_plot_activations(model, tb_writer.add_histogram, layer_types=["conv", "activation"])
-        optimizer = optim.SGD(
-            model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
-
-    # HFP8
+    # Quantize model and optimizer
     if opt.quant:
-        # pdb.set_trace()
         assert quant_hyp is not None, 'Hyps file must have quant_hyps dict in order to train in low-precision'
-        tb_quant_hyp = deepcopy(quant_hyp)
-        forward_rounding = quant_hyp["forward"].pop("rounding")
-        backward_rounding = quant_hyp["backward"].pop("rounding")
-        # Model
-        forward_num = FloatingPoint(**quant_hyp["forward"])
-        backward_num = FloatingPoint(**quant_hyp["backward"])
-        except_layers = quant_hyp["layers"].get("except", [])
-        model = sequential_lower(model,
-                                 layer_types=quant_hyp["layers"]["quant"],
-                                 except_layers=except_layers,
-                                 forward_number=forward_num,
-                                 forward_rounding=forward_rounding,
-                                 backward_number=backward_num,
-                                 backward_rounding=backward_rounding,
-                                 )
-        
-        # Add histogram plotter for forward
-        # if tb_writer:
-        #     pdb.set_trace()
-        #     model = sequential_plot_activations(model, tb_writer.add_histogram, layer_types=["quant"])
-
         # Amp
         if isinstance(quant_hyp["loss"]["scale"], str) and "dynamic" in quant_hyp["loss"]["scale"]:
             opt.amp = True
 
-        # Optimizer
-        grad_scaling = quant_hyp["grad"].pop("scale")
-        if isinstance(grad_scaling, str):
-            grad_scaling = 1
+        tb_quant_hyp = deepcopy(quant_hyp)
 
-        def weight_quant(x):
-            return float_quantize(x, **quant_hyp["weight"])
-
-        def gradient_quant(x):
-            return float_quantize(x, **quant_hyp["grad"])
-
-        acc_quant = (lambda x: float_quantize(x, **quant_hyp["acc"])) if quant_hyp.get("acc") is not None else None
-        mom_quant = (lambda x: float_quantize(x, **quant_hyp["mom"])) if quant_hyp.get("mom") is not None else None
-
-        # Optimizer
-        optimizer = optim.SGD(
-            model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
-        optimizer = OptimLP(optimizer,
-                            weight_quant=weight_quant,
-                            grad_quant=gradient_quant,
-                            grad_scaling=grad_scaling,
-                            momentum_quant=mom_quant,
-                            acc_quant=acc_quant)
-        if opt.amp:
-            model, optimizer = amp.initialize(
-                model, optimizer, opt_level='O0', loss_scale="dynamic")
+        model, optimizer = quant(quant_hyp, model, optimzier, opt.amp)
+        
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
 
