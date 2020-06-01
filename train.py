@@ -17,10 +17,10 @@ from utils.datasets import *
 from utils.plot_activations import sequential_plot_activations
 from utils.utils import *
 
-wdir = 'weights' + os.sep  # weights dir
-last = wdir + 'last.pt'
-best = wdir + 'best.pt'
-results_file = 'results.txt'
+# wdir = 'weights' + os.sep  # weights dir
+# last = wdir + 'last.pt'
+# best = wdir + 'best.pt'
+# results_file = 'results.txt'
 
 # # Overwrite hyp with hyp*.txt (optional)
 # f = glob.glob('hyp*.txt')
@@ -368,22 +368,6 @@ def train(hyp, quant_hyp=None):
             os.system('gsutil cp results.txt gs://%s/results/results%s.txt' %
                       (opt.bucket, opt.name))
 
-        # Tensorboard
-        if tb_writer:
-            tags = ['train/giou_loss', 'train/obj_loss', 'train/cls_loss',
-                    'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/F1',
-                    'val/giou_loss', 'val/obj_loss', 'val/cls_loss']
-            for x, tag in zip(list(mloss[:-1]) + list(results), tags):
-                tb_writer.add_scalar(tag, x, epoch)
-
-            # Write hparams w/ metrics
-            hyp_tb = deepcopy(hyp)
-            if opt.quant:
-                hyp_tb.update(quant_hyp_hr(tb_quant_hyp))
-            hyp_m = {k: v for k, v in zip(tags[-7:], list(results))}
-            # pdb.set_trace()
-            tb_writer.add_hparams(hyp_tb, hyp_m)
-
         # Update best mAP
         # fitness_i = weighted combination of [P, R, mAP, F1]
         fi = fitness(np.array(results).reshape(1, -1))
@@ -407,21 +391,39 @@ def train(hyp, quant_hyp=None):
                 torch.save(chkpt, best)
             del chkpt
 
+                # Tensorboard
+        if tb_writer:
+            tags = ['train/giou_loss', 'train/obj_loss', 'train/cls_loss',
+                    'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/F1',
+                    'val/giou_loss', 'val/obj_loss', 'val/cls_loss']
+            for x, tag in zip(list(mloss[:-1]) + list(results), tags):
+                tb_writer.add_scalar(tag, x, epoch)
+
+            # (over)write hparams if best fitness
+            if (best_fitness == fi):
+                # Write hparams w/ metrics
+                hyp_tb = deepcopy(hyp)
+                if opt.quant:
+                    hyp_tb.update(quant_hyp_hr(tb_quant_hyp))
+                hyp_m = {k: v for k, v in zip(tags[-7:], list(results))}
+                # pdb.set_trace()
+                tb_writer.add_hparams(hyp_tb, hyp_m)
+
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
 
-    n = opt.name
-    if len(n):
-        n = '_' + n if not n.isnumeric() else n
-        fresults, flast, fbest = 'results%s.txt' % n, wdir + \
-            'last%s.pt' % n, wdir + 'best%s.pt' % n
-        for f1, f2 in zip([wdir + 'last.pt', wdir + 'best.pt', 'results.txt'], [flast, fbest, fresults]):
-            if os.path.exists(f1):
-                os.rename(f1, f2)  # rename
-                ispt = f2.endswith('.pt')  # is *.pt
-                strip_optimizer(f2) if ispt else None  # strip optimizer
-                os.system('gsutil cp %s gs://%s/weights' % (f2, opt.bucket)
-                          ) if opt.bucket and ispt else None  # upload
+    # n = opt.name
+    # if len(n):
+    #     n = '_' + n if not n.isnumeric() else n
+    #     fresults, flast, fbest = 'results%s.txt' % n, wdir + \
+    #         'last%s.pt' % n, wdir + 'best%s.pt' % n
+    #     for f1, f2 in zip([wdir + 'last.pt', wdir + 'best.pt', 'results.txt'], [flast, fbest, fresults]):
+    #         if os.path.exists(f1):
+    #             os.rename(f1, f2)  # rename
+    #             ispt = f2.endswith('.pt')  # is *.pt
+    #             strip_optimizer(f2) if ispt else None  # strip optimizer
+    #             os.system('gsutil cp %s gs://%s/weights' % (f2, opt.bucket)
+    #                       ) if opt.bucket and ispt else None  # upload
 
     # if not opt.evolve:
     #     plot_results()  # save as results.png
@@ -463,6 +465,7 @@ if __name__ == '__main__':
                         help='cache images for faster training')
     parser.add_argument('--weights', type=str,
                         default='weights/yolov3-spp-ultralytics.pt', help='initial weights path')
+    parser.add_argument('--ckpt-dir', default='weights', help='directory for saving checkpoints')
     parser.add_argument(
         '--name', default='', help='renames results.txt to results_name.txt if supplied')
     parser.add_argument('--device', default='',
@@ -477,9 +480,16 @@ if __name__ == '__main__':
     parser.add_argument('--amp', action='store_true',
                         help='use apex for dynamic loss scaling')
     opt = parser.parse_args()
-    opt.weights = last if opt.resume else opt.weights
-    # check_git_status()
     print(opt)
+
+    # Set file names for results, evolve, last, best
+    results_file = f'{opt.name}_results.txt'
+    evolve_file = f'{opt.name}_evolve.txt'
+    last = os.path.join(opt.ckpt_dir, f'{opt.name}_last.pt')
+    best = os.path.join(opt.ckpt_dir, f'{opt.name}_best.pt')
+
+    opt.weights = last if opt.resume else opt.weights
+
     # extend to 3 sizes (min, max, test)
     opt.img_size.extend([opt.img_size[-1]] * (3 - len(opt.img_size)))
     # pdb.set_trace()
@@ -509,15 +519,14 @@ if __name__ == '__main__':
     else:  # Evolve hyperparameters (optional)
         opt.notest, opt.nosave = True, True  # only test/save final epoch
         if opt.bucket:
-            os.system('gsutil cp gs://%s/evolve.txt .' %
-                      opt.bucket)  # download evolve.txt if exists
+            os.system(f'gsutil cp gs://{opt.bucket}/{evolve_file} .')  # download evolve.txt if exists
 
         for _ in range(1):  # generations to evolve
             # if evolve.txt exists: select best hyps and mutate
-            if os.path.exists('evolve.txt'):
+            if os.path.exists(evolve_file):
                 # Select parent(s)
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
-                x = np.loadtxt('evolve.txt', ndmin=2)
+                x = np.loadtxt(evolve_file, ndmin=2)
                 n = min(5, len(x))  # number of previous results to consider
                 x = x[np.argsort(-fitness(x))][:n]  # top n mutations
                 w = fitness(x) - fitness(x).min()  # weights
