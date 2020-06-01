@@ -1,0 +1,4 @@
+classes=1
+train=/data/cbarburescu/repos/q/qyolov3/data/coco_person/train.txt
+valid=/data/cbarburescu/repos/q/qyolov3/data/coco_person/val.txt
+names=/data/cbarburescu/repos/q/qyolov3/data/coco_person.names
