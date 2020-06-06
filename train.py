@@ -11,6 +11,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
+from apex import amp
 from utils.quant import quant
 from models import *
 from utils.datasets import *
@@ -143,9 +144,7 @@ def train(hyp, quant_hyp=None):
         if isinstance(quant_hyp["loss"]["scale"], str) and "dynamic" in quant_hyp["loss"]["scale"]:
             opt.amp = True
 
-        tb_quant_hyp = deepcopy(quant_hyp)
-
-        model, optimizer = quant(quant_hyp, model, optimzier, opt.amp)
+        model, optimizer = quant(quant_hyp, model, hyp, optimizer, opt.amp)
         
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
@@ -330,7 +329,7 @@ def train(hyp, quant_hyp=None):
 
                     # tb_writer.add_graph(model, imgs)  # add model to tensorboard
 
-            if ni % 1000 == 0:
+            if tb_writer and ni % 1000 == 0:
                 # pdb.set_trace()
                 for name, param in model.named_parameters():
                     hist_name = ".".join(name.split(".")[1:])
@@ -404,7 +403,7 @@ def train(hyp, quant_hyp=None):
                 # Write hparams w/ metrics
                 hyp_tb = deepcopy(hyp)
                 if opt.quant:
-                    hyp_tb.update(quant_hyp_hr(tb_quant_hyp))
+                    hyp_tb.update(quant_hyp_hr(quant_hyp))
                 hyp_m = {k: v for k, v in zip(tags[-7:], list(results))}
                 # pdb.set_trace()
                 tb_writer.add_hparams(hyp_tb, hyp_m)
@@ -521,7 +520,7 @@ if __name__ == '__main__':
         if opt.bucket:
             os.system(f'gsutil cp gs://{opt.bucket}/{evolve_file} .')  # download evolve.txt if exists
 
-        for _ in range(1):  # generations to evolve
+        for _ in range(20):  # generations to evolve
             # if evolve.txt exists: select best hyps and mutate
             if os.path.exists(evolve_file):
                 # Select parent(s)
@@ -542,7 +541,7 @@ if __name__ == '__main__':
                 method, mp, s = 3, 0.9, 0.2  # method, mutation probability, sigma
                 npr = np.random
                 npr.seed(int(time.time()))
-                g = np.array([1, 1, 1, 1, 1, 1, 1, 0, .1, 1,
+                g = np.array([1, 1, 1, 1, 1, 1, 1, 0, .1, 0, 1,
                               0, 1, 1, 1, 1, 1, 1, 1])  # gains
                 ng = len(g)
                 if method == 1:
@@ -567,10 +566,10 @@ if __name__ == '__main__':
                 hyp[k] = np.clip(hyp[k], v[0], v[1])
 
             # Train mutation
-            results = train(hyp.copy())
+            results = train(hyp.copy(), quant_hyp)
 
             # Write mutation results
-            print_mutation(hyp, results, opt.bucket)
+            print_mutation(hyp, results, evolve_file, opt.bucket)
 
             # Plot results
             # plot_evolution_results(hyp)

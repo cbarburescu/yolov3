@@ -22,7 +22,7 @@ def detect(save_img=False):
     model = Darknet(opt.cfg, img_size)
 
     # Quantize model
-    pdb.set_trace()
+    # pdb.set_trace()
     if opt.quant:
         with open(opt.hyps) as hyps_file:
             quant_hyp = eval(hyps_file.read())['quant_hyp']

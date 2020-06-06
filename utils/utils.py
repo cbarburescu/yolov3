@@ -813,7 +813,7 @@ def kmean_anchors(path='./data/coco64.txt', n=9, img_size=(320, 1024), thr=0.20,
     return k
 
 
-def print_mutation(hyp, results, bucket=''):
+def print_mutation(hyp, results, evolve_file, bucket=''):
     # Print mutation results to evolve.txt (for use with train.py --evolve)
     a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
     b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
@@ -821,15 +821,15 @@ def print_mutation(hyp, results, bucket=''):
     print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
 
     if bucket:
-        os.system('gsutil cp gs://%s/evolve.txt .' % bucket)  # download evolve.txt
+        os.system(f'gsutil cp gs://{bucket}/{evolve_file} .')  # download evolve.txt
 
-    with open('evolve.txt', 'a') as f:  # append result
+    with open(evolve_file, 'a') as f:  # append result
         f.write(c + b + '\n')
-    x = np.unique(np.loadtxt('evolve.txt', ndmin=2), axis=0)  # load unique rows
-    np.savetxt('evolve.txt', x[np.argsort(-fitness(x))], '%10.3g')  # save sort by fitness
+    x = np.unique(np.loadtxt(evolve_file, ndmin=2), axis=0)  # load unique rows
+    np.savetxt(evolve_file, x[np.argsort(-fitness(x))], '%10.3g')  # save sort by fitness
 
     if bucket:
-        os.system('gsutil cp evolve.txt gs://%s' % bucket)  # upload evolve.txt
+        os.system(f'gsutil cp {evolve_file} gs://{bucket}')  # upload evolve.txt
 
 
 def apply_classifier(x, model, img, im0):
@@ -905,7 +905,7 @@ def output_to_target(output, width, height):
 # Plotting functions ---------------------------------------------------------------------------------------------------
 def plot_one_box(x, img, color=None, label=None, line_thickness=None):
     # Plots one bounding box on image img
-    tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
+    tl = line_thickness or round(0.004 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
     color = color or [random.randint(0, 255) for _ in range(3)]
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
     cv2.rectangle(img, c1, c2, color, thickness=tl)
@@ -1124,3 +1124,12 @@ def plot_results(start=0, stop=0, bucket='', id=()):  # from utils.utils import 
     fig.tight_layout()
     ax[1].legend()
     fig.savefig('results.png', dpi=200)
+
+
+# Video functions ---------------------------------------------------------------------------------------------------
+def release_init_writer(vid_path, vid_writer, fps, fourcc, w, h):
+    if isinstance(vid_writer, cv2.VideoWriter):
+        vid_writer.release()  # release previous video writer
+    vid_writer = cv2.VideoWriter(vid_path, cv2.VideoWriter_fourcc(*fourcc), fps, (w, h))
+
+    return vid_writer
