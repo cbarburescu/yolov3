@@ -33,6 +33,12 @@ def test(cfg,
         # Initialize model
         model = Darknet(cfg, img_size)
 
+        # Quantize model
+        if opt.quant:
+            with open(opt.hyps) as hyps_file:
+                quant_hyp = eval(hyps_file.read())['quant_hyp']
+            model = quant(quant_hyp, model)
+
         # Load weights
         attempt_download(weights)
         if weights.endswith('.pt'):  # pytorch format
@@ -244,6 +250,8 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='', help='device id (i.e. 0 or 0,1) or cpu')
     parser.add_argument('--single-cls', action='store_true', help='train as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
+    parser.add_argument('--quant', action='store_true', help='Quantize using quant module')
+    parser.add_argument('--hyps', help='Hyps file with quant configuration')
     opt = parser.parse_args()
     opt.save_json = opt.save_json or any([x in opt.data for x in ['coco.data', 'coco2014.data', 'coco2017.data']])
     print(opt)

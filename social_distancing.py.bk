@@ -14,8 +14,6 @@ def detect(save_img=False):
     out, source, weights, half, view_img, save_txt = opt.output, opt.source, opt.weights, opt.half, opt.view_img, opt.save_txt
     webcam = source == '0' or source.startswith(
         'rtsp') or source.startswith('http') or source.endswith('.txt')
-    social_distancing = opt.command if opt.command == "socialdistancing" else False
-    auto_perspective = getattr(opt, "auto", False)
 
     # Initialize
     device = torch_utils.select_device(
@@ -85,10 +83,10 @@ def detect(save_img=False):
         # set True to speed up constant image size inference
         torch.backends.cudnn.benchmark = True
         raise NotImplementedError("Webcam not supported for Social Distancing ES yet") 
-        dataset = LoadStreams(source, img_size=img_size, social_distancing=social_distancing, auto_perspective=auto_perspective)
+        dataset = LoadStreams(source, img_size=img_size, auto_perspective=opt.auto)
     else:
         save_img = True
-        dataset = LoadImages(source, img_size=img_size, social_distancing=social_distancing, auto_perspective=auto_perspective)
+        dataset = LoadImages(source, img_size=img_size, auto_perspective=opt.auto)
     vid_path, vid_writer = "", None
     bird_vid_path, bird_vid_writer = None, None
 
@@ -103,10 +101,9 @@ def detect(save_img=False):
     _ = model(img.half() if half else img.float()
               ) if device.type != 'cpu' else None  # run once
     for path, img, im0s, vid_cap in dataset:
-        if social_distancing:
-            if dataset.video_flag and dataset.frame == 1:
-                # Init social distancing obj
-                sdes = SocialDistancingES(dataset, opt.bird_scale, auto_perspective)
+        if dataset.video_flag and dataset.frame == 1:
+            # Init social distancing obj
+            sdes = SocialDistancingES(dataset, opt.bird_scale, opt.auto)
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -173,18 +170,16 @@ def detect(save_img=False):
                         # bbox = [xyxy[i] / dataset.w if i % 2 == 0 else xyxy[i] / dataset.h for i in range(len(xyxy))]
                         person_boxes.append(xyxy)
 
-                if social_distancing:
-                    # Social distancing expert system
-                    sdes.plot_points_on_bird_eye_view(im0, person_boxes)
-                    sdes.plot_lines_between_nodes()
-                    sdes.update_stats(num_persons)
-                    # sdes.calculate_stay_at_home_index()
+                # Social distancing expert system
+                sdes.plot_points_on_bird_eye_view(im0, person_boxes)
+                sdes.plot_lines_between_nodes()
+                sdes.update_stats(num_persons)
+                # sdes.calculate_stay_at_home_index()
 
-            if social_distancing:
-                # Display text info on frame
-                sdes.draw_info(im0)
-                if not opt.separate:
-                    im0 = sdes.merge_ims(im0)
+            # Display text info on frame
+            sdes.draw_info(im0)
+            if not opt.separate:
+                im0 = sdes.merge_ims(im0)
 
             # Print time (inference + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))
@@ -201,7 +196,7 @@ def detect(save_img=False):
                 if dataset.mode == 'images':
                     cv2.imwrite(save_path, im0)
                 else:
-                    if not getattr(opt, "separate", False):
+                    if not opt.separate:
                         if vid_path != save_path:  # new video
                             vid_path = save_path
                             if isinstance(vid_writer, cv2.VideoWriter):
@@ -213,15 +208,13 @@ def detect(save_img=False):
                     else:
                         if os.path.splitext(save_path)[0] not in vid_path:  # new video
                             vid_path = "_out".join(os.path.splitext(save_path))
-                            vid_writer = release_init_writer(vid_path, vid_writer, dataset.fps, opt.fourcc, dataset.w, dataset.h)
+                            bird_vid_path = "_bird".join(os.path.splitext(save_path))
 
-                            if social_distancing:
-                                bird_vid_path = "_bird".join(os.path.splitext(save_path))
-                                bird_vid_writer = release_init_writer(bird_vid_path, bird_vid_writer, dataset.fps, opt.fourcc, int((dataset.w*sdes.scale_w)), int((dataset.h*sdes.scale_h)))
+                            vid_writer = release_init_writer(vid_path, vid_writer, dataset.fps, opt.fourcc, dataset.w, dataset.h)
+                            bird_vid_writer = release_init_writer(bird_vid_path, bird_vid_writer, dataset.fps, opt.fourcc, int((dataset.w*sdes.scale_w)), int((dataset.h*sdes.scale_h)))
 
                         vid_writer.write(im0)
-                        if social_distancing:
-                            bird_vid_writer.write(sdes.bird_im)
+                        bird_vid_writer.write(sdes.bird_im)
 
 
     if save_txt or save_img:
@@ -234,7 +227,6 @@ def detect(save_img=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    sd_parser = parser.add_subparsers(dest="command").add_parser("socialdistancing")
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-spp.cfg', help='*.cfg path')
     parser.add_argument('--names', type=str, default='data/coco.names', help='*.names path')
     parser.add_argument('--weights', type=str, default='weights/yolov3-spp-ultralytics.pt', help='weights path')
@@ -253,12 +245,12 @@ if __name__ == '__main__':
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--quant', action='store_true', help='Quantize using quant module')
     parser.add_argument('--hyps', help='Hyps file with quant configuration')
-    sd_parser.add_argument('--separate', action="store_true", help='Separate videos with detection and bird\'s eye view')
-    sd_parser.add_argument('--bird-scale', nargs=2, type=float, default=[0.6, 2], help='Scale for bird\'s eye view video (w,h)')
-    sd_parser.add_argument('--auto_perspective', action="store_true", help='Automatic bird\'s eye view from cam info')
-    sd_parser.add_argument('--cam-height', default=400, help='Camera installation height (cm)')
-    sd_parser.add_argument('--cam-inst-angle', nargs=2, type=float, default=[60, 30], help='Camera installation angles (x, y)')
-    sd_parser.add_argument('--cam-view-angle', nargs=2, type=float, default=[82, 70], help='Camera installation angles (x, y)')
+    parser.add_argument('--separate', action="store_true", help='Separate videos with detection and bird\'s eye view')
+    parser.add_argument('--bird-scale', nargs=2, type=float, default=[0.6, 2], help='Scale for bird\'s eye view video (w,h)')
+    parser.add_argument('--auto', action="store_true", help='Automatic bird\'s eye view from cam info')
+    parser.add_argument('--cam-height', default=400, help='Camera installation height (cm)')
+    parser.add_argument('--cam-inst-angle', nargs=2, type=float, default=[60, 30], help='Camera installation angles (x, y)')
+    parser.add_argument('--cam-view-angle', nargs=2, type=float, default=[82, 70], help='Camera installation angles (x, y)')
     opt = parser.parse_args()
     print(opt)
 

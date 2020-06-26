@@ -42,7 +42,7 @@ def exif_size(img):
 
 
 class LoadImages:  # for inference
-    def __init__(self, path, img_size=416):
+    def __init__(self, path, img_size=416, social_distancing=False, auto_perspective=False):
         path = str(Path(path))  # os-agnostic
         files = []
         if os.path.isdir(path):
@@ -62,6 +62,8 @@ class LoadImages:  # for inference
         self.video_flag = [False] * nI + [True] * nV
         self.mode = 'images'
         self.mouse_pts = []
+        self.social_distancing = social_distancing
+        self.auto_perspective = auto_perspective
         if any(videos):
             self.new_video(videos[0])  # new video
         else:
@@ -91,22 +93,19 @@ class LoadImages:  # for inference
                     self.new_video(path)
                     ret_val, img0 = self.cap.read()
 
-            if self.frame == 0:
+            if self.frame == 0 and self.social_distancing and not self.auto_perspective:
                 self.init_image = img0
                 
                 # cv2.namedWindow("Draw")
                 # cv2.setMouseCallback("Draw", self.populate_mouse_points)
                 # while True:
-                #     self.init_image = img0
                 #     cv2.imshow("Draw", self.init_image)
                 #     cv2.waitKey(1)
                 #     if len(self.mouse_pts) == 7:
                 #         cv2.destroyWindow("Draw")
                 #         break
 
-                # self.mouse_pts = [(616, 5), (1256, 6), (1126, 674), (43, 401), (718, 194), (721, 367), (612, 5)]
-                self.mouse_pts = [(616, 4), (1251, 8), (1118, 701), (54, 399), (715, 189), (717, 370)]
-                self.set_camera_perspective()
+                self.mouse_pts = [(740, 1), (1247, 2), (1106, 692), (75, 402), (716, 193), (721, 369)]
                 
             self.frame += 1
             print('video %g/%g (%g/%g) %s: ' % (self.count + 1,
@@ -137,7 +136,6 @@ class LoadImages:  # for inference
         self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-
     def populate_mouse_points(self, event, x, y, flags, param):
         # Used to mark 4 points on the frame zero of the video that will be warped
         # Used to mark 2 points on the frame zero of the video that are 6 feet away
@@ -145,18 +143,7 @@ class LoadImages:  # for inference
             # mouseX, mouseY = x, y
             cv2.circle(self.init_image, (x, y), 10, (0, 255, 255), 10)
             self.mouse_pts.append((x, y))
-            print("Point detected")
-            print(self.mouse_pts)
-
-    def set_camera_perspective(self):
-        src = np.float32(np.array(self.mouse_pts[:4]))
-        dst = np.float32([
-            [0, 0],
-            [self.w, 0],
-            [self.w, self.h],
-            [0, self.h]])
-
-        self.camera_perspective = cv2.getPerspectiveTransform(src, dst)
+            print(f"Point detected; mouse points: {self.mouse_pts}")
 
     def __len__(self):
         return self.nF  # number of files
@@ -228,9 +215,12 @@ class LoadWebcam:  # for inference
 
 
 class LoadStreams:  # multiple IP or RTSP cameras
-    def __init__(self, sources='streams.txt', img_size=416):
+    def __init__(self, sources='streams.txt', img_size=416, social_distancing=False, auto_perspective=False):
         self.mode = 'images'
         self.img_size = img_size
+        self.mouse_pts = []
+        self.social_distancing = social_distancing
+        self.auto_perspective = auto_perspective
 
         if os.path.isfile(sources):
             with open(sources, 'r') as f:
@@ -283,6 +273,21 @@ class LoadStreams:  # multiple IP or RTSP cameras
     def __next__(self):
         self.count += 1
         img0 = self.imgs.copy()
+
+        if self.count == 0 and self.social_distancing and not auto_perspective:
+            for i in range(len(self.imgs)):
+                self.init_img = img0[i]
+                self.mouse_points.append([])
+
+                cv2.namedWindow(f"Draw for stream {i}")
+                cv2.setMouseCallback("Draw", self.populate_mouse_points)
+                while True:
+                    cv2.imshow("Draw", self.init_image)
+                    cv2.waitKey(1)
+                    if len(self.mouse_pts) == 7:
+                        cv2.destroyWindow("Draw")
+                        break
+
         if cv2.waitKey(1) == ord('q'):  # q to quit
             cv2.destroyAllWindows()
             raise StopIteration
@@ -303,6 +308,15 @@ class LoadStreams:  # multiple IP or RTSP cameras
 
     def __len__(self):
         return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
+
+    def populate_mouse_points(self, event, x, y, flags, param):
+        # Used to mark 4 points on the frame zero of the video that will be warped
+        # Used to mark 2 points on the frame zero of the video that are 6 feet away
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # mouseX, mouseY = x, y
+            cv2.circle(self.init_image, (x, y), 10, (0, 255, 255), 10)
+            self.mouse_pts[-1].append((x, y))
+            print(f"Point detected; mouse points: {self.mouse_pts}")
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing

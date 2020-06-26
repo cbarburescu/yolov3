@@ -78,76 +78,69 @@ def train(hyp, quant_hyp=None):
     optimizer = optim.SGD(
         model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
 
-    # pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
-    # for k, v in dict(model.named_parameters()).items():
-    #     if '.bias' in k:
-    #         pg2 += [v]  # biases
-    #     elif 'Conv2d.weight' in k:
-    #         pg1 += [v]  # apply weight_decay
-    #     else:
-    #         pg0 += [v]  # all else
-
-    # if opt.adam:
-    #     # hyp['lr0'] *= 0.1  # reduce lr (i.e. SGD=5E-3, Adam=5E-4)
-    #     optimizer = optim.Adam(pg0, lr=hyp['lr0'])
-    #     # optimizer = AdaBound(pg0, lr=hyp['lr0'], final_lr=0.1)
-    # else:
-    #     optimizer = optim.SGD(
-    #         pg0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=hyp['nesterov'])
-    # # add pg1 with weight_decay
-    # optimizer.add_param_group(
-    #     {'params': pg1, 'weight_decay': hyp['weight_decay']})
-    # optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
-    # print('Optimizer groups: %g .bias, %g Conv2d.weight, %g other' %
-    #       (len(pg2), len(pg1), len(pg0)))
-    # del pg0, pg1, pg2
-
-    start_epoch = 0
-    best_fitness = 0.0
-    attempt_download(weights)
-    if weights.endswith('.pt'):  # pytorch format
-        # possible weights are '*.pt', 'yolov3-spp.pt', 'yolov3-tiny.pt' etc.
-        chkpt = torch.load(weights, map_location=device)
-
-        # load model
-        try:
-            chkpt['model'] = {k: v for k, v in chkpt['model'].items() if model.state_dict()[
-                k].numel() == v.numel()}
-            model.load_state_dict(chkpt['model'], strict=False)
-        except KeyError as e:
-            s = "%s is not compatible with %s. Specify --weights '' or specify a --cfg compatible with %s. " \
-                "See https://github.com/ultralytics/yolov3/issues/657" % (
-                    opt.weights, opt.cfg, opt.weights)
-            raise KeyError(s) from e
-
-        # load optimizer
-        # if chkpt['optimizer'] is not None:
-        #     optimizer.load_state_dict(chkpt['optimizer'])
-        #     best_fitness = chkpt['best_fitness']
-
-        # load results
-        if chkpt.get('training_results') is not None:
-            with open(results_file, 'w') as file:
-                file.write(chkpt['training_results'])  # write results.txt
-
-        start_epoch = chkpt['epoch'] + 1
-        del chkpt
-
-    elif len(weights) > 0:  # darknet format
-        # possible weights are '*.weights', 'yolov3-tiny.conv.15',  'darknet53.conv.74' etc.
-        load_darknet_weights(model, weights)
-
     # Quantize model and optimizer
     if opt.quant:
         assert quant_hyp is not None, 'Hyps file must have quant_hyps dict in order to train in low-precision'
+
+        # load pretrained weights
+        if not opt.resume:
+            chkpt = torch.load(weights, map_location=device)
+
+            # load model
+            try:
+                chkpt['model'] = {k: v for k, v in chkpt['model'].items() if model.state_dict()[
+                    k].numel() == v.numel()}
+                model.load_state_dict(chkpt['model'], strict=False)
+            except KeyError as e:
+                s = "%s is not compatible with %s. Specify --weights '' or specify a --cfg compatible with %s. " \
+                    "See https://github.com/ultralytics/yolov3/issues/657" % (
+                        opt.weights, opt.cfg, opt.weights)
+                raise KeyError(s) from e
+            del chkpt
+
         # Amp
         if isinstance(quant_hyp["loss"]["scale"], str) and "dynamic" in quant_hyp["loss"]["scale"]:
             opt.amp = True
 
         model, optimizer = quant(quant_hyp, model, hyp, optimizer, opt.amp)
         
+    start_epoch = 0
+    best_fitness = 0.0
+    attempt_download(weights)
+    if not opt.quant or (opt.quant and opt.resume):
+        if weights.endswith('.pt'):  # pytorch format
+            # possible weights are '*.pt', 'yolov3-spp.pt', 'yolov3-tiny.pt' etc.
+            chkpt = torch.load(weights, map_location=device)
 
-    # Scheduler https://arxiv.org/pdf/1812.01187.pdf
+            # load model
+            try:
+                chkpt['model'] = {k: v for k, v in chkpt['model'].items() if model.state_dict()[
+                    k].numel() == v.numel()}
+                model.load_state_dict(chkpt['model'], strict=False)
+            except KeyError as e:
+                s = "%s is not compatible with %s. Specify --weights '' or specify a --cfg compatible with %s. " \
+                    "See https://github.com/ultralytics/yolov3/issues/657" % (
+                        opt.weights, opt.cfg, opt.weights)
+                raise KeyError(s) from e
+
+            # load optimizer
+            if chkpt['optimizer'] is not None:
+                optimizer.load_state_dict(chkpt['optimizer'])
+                best_fitness = chkpt['best_fitness']
+
+            # load results
+            if chkpt.get('training_results') is not None:
+                with open(results_file, 'w') as file:
+                    file.write(chkpt['training_results'])  # write results.txt
+
+            start_epoch = chkpt['epoch'] + 1
+            del chkpt
+
+        elif len(weights) > 0:  # darknet format
+            # possible weights are '*.weights', 'yolov3-tiny.conv.15',  'darknet53.conv.74' etc.
+            load_darknet_weights(model, weights)
+
+        # Scheduler https://arxiv.org/pdf/1812.01187.pdf
 
     def lf(x): return (((1 + math.cos(x * math.pi / epochs)) / 2)
                        ** 1.0) * 0.95 + 0.05  # cosine
@@ -520,7 +513,7 @@ if __name__ == '__main__':
         if opt.bucket:
             os.system(f'gsutil cp gs://{opt.bucket}/{evolve_file} .')  # download evolve.txt if exists
 
-        for _ in range(20):  # generations to evolve
+        for _ in range(50):  # generations to evolve
             # if evolve.txt exists: select best hyps and mutate
             if os.path.exists(evolve_file):
                 # Select parent(s)
