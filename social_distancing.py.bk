@@ -103,7 +103,7 @@ def detect(save_img=False):
     for path, img, im0s, vid_cap in dataset:
         if dataset.video_flag and dataset.frame == 1:
             # Init social distancing obj
-            sdes = SocialDistancingES(dataset, opt.bird_scale, opt.auto)
+            sds = SocialDistancingSystem(dataset, opt.bird_scale, opt.auto)
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -171,15 +171,15 @@ def detect(save_img=False):
                         person_boxes.append(xyxy)
 
                 # Social distancing expert system
-                sdes.plot_points_on_bird_eye_view(im0, person_boxes)
-                sdes.plot_lines_between_nodes()
-                sdes.update_stats(num_persons)
-                # sdes.calculate_stay_at_home_index()
+                sds.plot_points_on_bird_eye_view(im0, person_boxes)
+                sds.plot_lines_between_nodes()
+                sds.update_stats(num_persons)
+                # sds.calculate_stay_at_home_index()
 
             # Display text info on frame
-            sdes.draw_info(im0)
+            sds.draw_info(im0)
             if not opt.separate:
-                im0 = sdes.merge_ims(im0)
+                im0 = sds.merge_ims(im0)
 
             # Print time (inference + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))
@@ -211,10 +211,10 @@ def detect(save_img=False):
                             bird_vid_path = "_bird".join(os.path.splitext(save_path))
 
                             vid_writer = release_init_writer(vid_path, vid_writer, dataset.fps, opt.fourcc, dataset.w, dataset.h)
-                            bird_vid_writer = release_init_writer(bird_vid_path, bird_vid_writer, dataset.fps, opt.fourcc, int((dataset.w*sdes.scale_w)), int((dataset.h*sdes.scale_h)))
+                            bird_vid_writer = release_init_writer(bird_vid_path, bird_vid_writer, dataset.fps, opt.fourcc, int((dataset.w*sds.scale_w)), int((dataset.h*sds.scale_h)))
 
                         vid_writer.write(im0)
-                        bird_vid_writer.write(sdes.bird_im)
+                        bird_vid_writer.write(sds.bird_im)
 
 
     if save_txt or save_img:

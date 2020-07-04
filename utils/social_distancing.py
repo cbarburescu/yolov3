@@ -1,56 +1,77 @@
 import cv2
 import numpy as np
+import pdb
 
 from scipy.spatial.distance import pdist, squareform
 
 
-class SocialDistancingES:
-    def __init__(self, dataset, scale_bird, auto_perspective=False, bg_color=(41, 41, 41)):
+class SocialDistancingSystem:
+    def __init__(self, dataset, scale_bird, camera_calibration_dir=None, bg_color=(41, 41, 41)):
         # Init social distancing parameters
         self.pedestrians_detected = 0
         self.pedestrians_per_sec = 0
-        self.six_feet_violations = 0
-        self.abs_six_feet_violations = 0
-        self.total_six_feet_violations = 0
+        self.two_meter_violations = 0
+        self.abs_two_meter_violations = 0
+        self.total_two_meter_violations = 0
         self.pairs = 0
         self.sh_index = 1
         self.sc_index = 1
         self.scale_w, self.scale_h = scale_bird
-        self.auto_perspective = auto_perspective
+        self.auto_perspective = camera_calibration_dir is not None
         self.dataset = dataset
 
-        if not auto_perspective:
+        if not self.auto_perspective:
             # Init bird's eye view
-             next(iter(self.dataset))
-        
-        # Set camera perspective
-        self.set_camera_perspective()
+            next(iter(self.dataset))
 
-        # Compute distance threshold
-        self.set_distance_threshold()
+            # Set camera perspective
+            self.set_camera_perspective()
+
+            # Compute distance threshold
+            self.set_distance_threshold()
+        else:
+            self.load_3d_reconstruction_params()
 
     def set_camera_perspective(self):
-        if self.auto_perspective:
-            pass
-        # TODO compute camera perspectiv for auto mode
-        else:
-            src = np.float32(np.array(self.dataset.mouse_pts[:4]))
-            dst = np.float32([
-                [0, 0],
-                [self.dataset.w, 0],
-                [self.dataset.w, self.dataset.h],
-                [0, self.dataset.h]])
+        src = np.float32(np.array(self.dataset.mouse_pts[:4]))
+        dst = np.float32([
+            [0, 0],
+            [self.dataset.w, 0],
+            [self.dataset.w, self.dataset.h],
+            [0, self.dataset.h]])
 
         self.camera_perspective = cv2.getPerspectiveTransform(src, dst)
 
-    def set_distance_threshold(self):
+    def load_3d_reconstruction_params(self):
+        self.inverse_newcam_mtx = np.load(os.path.join(
+            self.camera_calibration_dir, 'inverse_newcam_mtx.npy'))
+        self.tvec1 = np.load(os.path.join(
+            self.camera_calibration_dir, 'tvec1.npy'))
+        R_mtx = np.load(os.path.join(self.camera_calibration_dir, 'R_mtx.npy'))
+        self.inverse_R_mtx = self.inverse_R_mtx = np.linalg.inv(R_mtx)
+        self.scalingfactor = np.load(os.path.join(self.camera_calibration_dir, 's_arr.npy'))[0]
+
+    def change_perspective(self, src):
         if self.auto_perspective:
-            pass
-            # TODO set dist points with auto perspective
+            points = np.expand_dims(np.append(src, 1))  # [[u, v , 1]]
+            uv_1 = np.array(points, dtype=np.float32)
+            uv_1 = uv_1.T
+            suv_1 = self.scalingfactor*uv_1
+            xyz_c = self.inverse_newcam_mtx.dot(suv_1)
+            xyz_c = xyz_c-self.tvec1
+            xyz = self.inverse_R_mtx.dot(xyz_c)
+
+            ret = xyz
         else:
-            dist_pts = np.array([self.dataset.mouse_pts[4:]], dtype=np.float32)
-        warped_dist = cv2.perspectiveTransform(
-            dist_pts, self.camera_perspective)[0]
+            ret = cv2.perspectiveTransform(src, self.camera_perspective)
+
+        return np.squeeze(ret[0][:][:2])  # first and single point, x and y coords
+
+    def set_distance_threshold(self):
+        dist_pts = np.array([self.dataset.mouse_pts[4:]], dtype=np.float32)
+        # warped_dist = cv2.perspectiveTransform(
+        #     dist_pts, self.camera_perspective)[0]
+        warped_dist = self.change_perspective(dist_pts)
 
         self.dist_thres = np.sqrt(
             (warped_dist[0][0] - warped_dist[1][0]) ** 2
@@ -83,8 +104,9 @@ class SocialDistancingES:
             mid_point_y = int(pedestrian_boxes[i][3])
 
             pts = np.array([[[mid_point_x, mid_point_y]]], dtype="float32")
-            warped_pt = cv2.perspectiveTransform(
-                pts, self.camera_perspective)[0][0]
+            # warped_pt = cv2.perspectiveTransform(
+            #     pts, self.camera_perspective)[0]
+            warped_pt = self.change_perspective(pts)
             warped_pt_scaled = (int(warped_pt[0] * self.scale_w),
                                 int(warped_pt[1] * self.scale_h))
 
@@ -102,12 +124,12 @@ class SocialDistancingES:
         dist_condensed = pdist(p)
         dist = squareform(dist_condensed)
 
-        self.six_feet_violations = len(np.where(dist_condensed <
+        self.two_meter_violations = len(np.where(dist_condensed <
                                                  self.dist_thres)[0])
         self.pairs += len(dist_condensed)
 
-        # Close enough: 10 feet mark
-        dd = np.where(dist < self.dist_thres * 6 / 10)
+        # Close enough: 3 meter mark
+        dd = np.where(dist < self.dist_thres / 2 * 3)
         close_p = []
         color_10 = (80, 172, 110)
         lineThickness = 4
@@ -126,7 +148,7 @@ class SocialDistancingES:
                     lineThickness,
                 )
 
-        # Really close: 6 feet mark
+        # Really close: 2 meter mark
         dd = np.where(dist < self.dist_thres)
         danger_p = []
         color_6 = (52, 92, 227)
@@ -152,10 +174,10 @@ class SocialDistancingES:
 
     def update_stats(self, num_pedestrians):
         self.pedestrians_detected += num_pedestrians
-        self.total_six_feet_violations += self.six_feet_violations / self.dataset.fps
-        self.abs_six_feet_violations += self.six_feet_violations
+        self.total_two_meter_violations += self.two_meter_violations / self.dataset.fps
+        self.abs_two_meter_violations += self.two_meter_violations
         if self.pairs != 0:
-            self.sc_index = 1 - self.abs_six_feet_violations / self.pairs
+            self.sc_index = 1 - self.abs_two_meter_violations / self.pairs
 
         self.calculate_stay_at_home_index()
 
@@ -191,7 +213,7 @@ class SocialDistancingES:
     def draw_info(self, frame):
         last_h = 75
 
-        text = f"# 6ft violations: {int(self.total_six_feet_violations)}"
+        text = f"# 2m violations: {int(self.total_two_meter_violations)}"
         last_h = self.put_text(frame, text, text_offset_y=last_h)
 
         text = f"Stay-at-home Index: {str(np.round(100 * self.sh_index, 1))}%"
@@ -203,6 +225,7 @@ class SocialDistancingES:
     def merge_ims(self, frame):
         # print(self.bird_im.shape, frame.shape)
         scale = self.dataset.h / self.bird_im.shape[0]
-        self.bird_im = cv2.resize(self.bird_im, dsize=(0, 0), fx=scale, fy=scale)
-        
+        self.bird_im = cv2.resize(
+            self.bird_im, dsize=(0, 0), fx=scale, fy=scale)
+
         return np.concatenate((frame, self.bird_im), axis=1)

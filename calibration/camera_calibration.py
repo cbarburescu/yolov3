@@ -1,0 +1,128 @@
+# https://docs.opencv.org/3.3.0/dc/dbb/tutorial_py_calibration.html
+
+import argparse
+import glob
+import os
+import time
+
+import cv2
+import numpy as np
+
+if __name__ == "__main__":
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--calibration-images", default=os.path.join(script_dir,
+                                                                     "images/camera_small"), help="dir with images for calibration")
+    parser.add_argument("--save-dir", default=os.path.join(script_dir,
+                                                           "camera_params"), help="dir with camera calibration parameters")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Do not write new calibration params in --save-dir")
+    opt = parser.parse_args()
+
+    # termination criteria
+
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+    # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
+    objp = np.zeros((6*9, 3), np.float32)
+
+    # add 2.5 to account for 2.5 cm per square in grid
+    objp[:, :2] = np.mgrid[0:9, 0:6].T.reshape(-1, 2)*10.8
+
+    # Arrays to store object points and image points from all the images.
+    objpoints = []  # 3d point in real world space
+    imgpoints = []  # 2d points in image plane.
+    images = glob.glob(opt.calibration_images + '/*.jpeg')
+
+    win_name = "Verify"
+    cv2.namedWindow(win_name, cv2.WND_PROP_FULLSCREEN)
+    cv2.setWindowProperty(
+        win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+    print("getting images")
+    for fname in images:
+        img = cv2.imread(fname)
+        print(fname)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Find the chess board corners
+        ret, corners = cv2.findChessboardCorners(gray, (9, 6), None)
+        # If found, add object points, image points (after refining them)
+        if ret == True:
+            objpoints.append(objp)
+            corners2 = cv2.cornerSubPix(
+                gray, corners, (11, 11), (-1, -1), criteria)
+            imgpoints.append(corners)
+            # Draw and display the corners
+            cv2.drawChessboardCorners(img, (9, 6), corners2, ret)
+            cv2.imshow(win_name, img)
+            cv2.waitKey(500)
+
+        img1 = img
+
+    cv2.destroyAllWindows()
+
+    print(">==> Starting calibration")
+    ret, cam_mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
+        objpoints, imgpoints, gray.shape[::-1], None, None)
+
+    # print(ret)
+    print("Camera Matrix")
+    print(cam_mtx, end="\n"+"-"*70+"\n")
+
+    print("Distortion Coeff")
+    print(dist, end="\n"+"-"*70+"\n")
+
+    print("r vecs")
+    print(rvecs[2], end="\n"+"-"*70+"\n")
+
+    print("t Vecs")
+    print(tvecs[2], end="\n"+"-"*70+"\n")
+
+    print(">==> Calibration ended")
+
+    h,  w = img1.shape[:2]
+    print("Image Width, Height")
+    print(w, h, end="\n"+"-"*70+"\n")
+    # if using Alpha 0, so we discard the black pixels from the distortion.  this helps make the entire region of interest is the full dimensions of the image (after undistort)
+    # if using Alpha 1, we retain the black pixels, and obtain the region of interest as the valid pixels for the matrix.
+    # i will use Apha 1, so that I don't have to run undistort.. and can just calculate my real world x,y
+    newcam_mtx, roi = cv2.getOptimalNewCameraMatrix(
+        cam_mtx, dist, (w, h), 1, (w, h))
+
+    print("Region of Interest")
+    print(roi, end="\n"+"-"*70+"\n")
+
+    print("New Camera Matrix")
+    print(newcam_mtx, end="\n"+"-"*70+"\n")
+
+    inverse = np.linalg.inv(newcam_mtx)
+    print("Inverse New Camera Matrix")
+    print(inverse)
+
+    if not opt.dry_run:
+        save_names = {
+            'cam_mtx.npy': cam_mtx,
+            'dist.npy': dist,
+            'roi.npy': roi,
+            'newcam_mtx.npy': newcam_mtx,
+        }
+        for k, v in save_names.items():
+            np.save(os.path.join(opt.save_dir, k), v)
+
+    # undistort
+    undst = cv2.undistort(img1, cam_mtx, dist, None, newcam_mtx)
+
+    # crop the image
+    #x, y, w, h = roi
+    #dst = dst[y:y+h, x:x+w]
+    # cv2.circle(dst,(308,160),5,(0,255,0),2)
+    cv2.imshow('img1', np.concatenate((img1, undst), axis=1))
+    k = cv2.waitKey(0)
+    while True:
+        if k == ord("q"):
+            cv2.destroyAllWindows()
+            exit()
+        else:
+            cv2.imshow('img1', np.concatenate((img1, undst), axis=1))
+            k = cv2.waitKey(0)
