@@ -96,17 +96,18 @@ class LoadImages:  # for inference
             if self.frame == 0 and self.social_distancing and not self.auto_perspective:
                 self.init_image = img0
                 
-                # cv2.namedWindow("Draw")
-                # cv2.setMouseCallback("Draw", self.populate_mouse_points)
-                # while True:
-                #     cv2.imshow("Draw", self.init_image)
-                #     cv2.waitKey(1)
-                #     if len(self.mouse_pts) == 7:
-                #         cv2.destroyWindow("Draw")
-                #         break
+            #     cv2.namedWindow("Draw")
+            #     cv2.setMouseCallback("Draw", self.populate_mouse_points)
+            #     while True:
+            #         cv2.imshow("Draw", self.init_image)
+            #         cv2.waitKey(1)
+            #         if len(self.mouse_pts) == 7:
+            #             cv2.destroyWindow("Draw")
+            #             break
 
-                self.mouse_pts = [(740, 1), (1247, 2), (1106, 692), (75, 402), (716, 193), (721, 369)]
-                
+                # self.mouse_pts = [(740, 1), (1247, 2), (1106, 692), (75, 402), (716, 193), (721, 369)]  # vid_short
+                self.mouse_pts = [(531, 1), (9, 117), (36, 351), (624, 203), (46, 139), (138, 297)]  # test_arin_dist
+
             self.frame += 1
             print('video %g/%g (%g/%g) %s: ' % (self.count + 1,
                                                 self.nF, self.frame, self.nframes, path), end='')
@@ -138,7 +139,7 @@ class LoadImages:  # for inference
 
     def populate_mouse_points(self, event, x, y, flags, param):
         # Used to mark 4 points on the frame zero of the video that will be warped
-        # Used to mark 2 points on the frame zero of the video that are 6 feet away
+        # Used to mark 2 points on the frame zero of the video that are 2 meters away
         if event == cv2.EVENT_LBUTTONDOWN:
             # mouseX, mouseY = x, y
             cv2.circle(self.init_image, (x, y), 10, (0, 255, 255), 10)
@@ -311,7 +312,7 @@ class LoadStreams:  # multiple IP or RTSP cameras
 
     def populate_mouse_points(self, event, x, y, flags, param):
         # Used to mark 4 points on the frame zero of the video that will be warped
-        # Used to mark 2 points on the frame zero of the video that are 6 feet away
+        # Used to mark 2 points on the frame zero of the video that are 2 meters away
         if event == cv2.EVENT_LBUTTONDOWN:
             # mouseX, mouseY = x, y
             cv2.circle(self.init_image, (x, y), 10, (0, 255, 255), 10)

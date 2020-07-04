@@ -15,8 +15,7 @@ def detect(save_img=False):
     webcam = source == '0' or source.startswith(
         'rtsp') or source.startswith('http') or source.endswith('.txt')
     social_distancing = opt.command if opt.command == "socialdistancing" else False
-    camera_params =  getattr(opt, "camera_params", None)
-    auto_perspective = camera_params is not None
+    auto_perspective = getattr(opt, "auto", False)
 
     # Initialize
     device = torch_utils.select_device(
@@ -107,7 +106,7 @@ def detect(save_img=False):
         if social_distancing:
             if dataset.video_flag and dataset.frame == 1:
                 # Init social distancing obj
-                sds = SocialDistancingSystem(dataset, opt.bird_scale, camera_calibration_dir=camera_params)
+                sds = SocialDistancingSystem(dataset, opt.bird_scale, auto_perspective)
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -256,7 +255,10 @@ if __name__ == '__main__':
     parser.add_argument('--hyps', help='Hyps file with quant configuration')
     sd_parser.add_argument('--separate', action="store_true", help='Separate videos with detection and bird\'s eye view')
     sd_parser.add_argument('--bird-scale', nargs=2, type=float, default=[0.6, 2], help='Scale for bird\'s eye view video (w,h)')
-    sd_parser.add_argument('--camera-params', help='Directory with camera parameters for automatic bird\'s eye view')
+    sd_parser.add_argument('--auto_perspective', action="store_true", help='Automatic bird\'s eye view from cam info')
+    sd_parser.add_argument('--cam-height', default=400, help='Camera installation height (cm)')
+    sd_parser.add_argument('--cam-inst-angle', nargs=2, type=float, default=[60, 30], help='Camera installation angles (x, y)')
+    sd_parser.add_argument('--cam-view-angle', nargs=2, type=float, default=[82, 70], help='Camera installation angles (x, y)')
     opt = parser.parse_args()
     print(opt)
 
