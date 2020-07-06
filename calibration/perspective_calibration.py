@@ -3,50 +3,13 @@
 import argparse
 import glob
 import os
+import sys
 
 import cv2
 import numpy as np
 
-class Basis:
-    def __init__(self):
-        self.oz = np.array([73, 260, -448], dtype=np.float32)
-        self.oy = np.array([-20.79, 715.62, -448], dtype=np.float32)
-        self.ox = np.cross(self.oy, self.oz)
-
-        self.oz = self.oz/np.linalg.norm(self.oz)
-        self.oy = self.oy/np.linalg.norm(self.oy)
-        self.ox = self.ox/np.linalg.norm(self.ox)
-
-        self.B = np.array([self.ox, self.oy, self.oz])
-        print(self.B)
-
-    def simples_to_primes(self, simples):
-        # simples - 1x3 vector or Nx3 array of vectors in simple basis coords
-        ret = np.copy(simples)
-        ret[..., 2] -= 448
-        return ret
-
-    def primes_to_simples(self, primes):
-        # primes - 1x3 vector or Nx3 array of vectors in prime basis coords
-        ret = np.copy(primes)
-        ret[..., 2] += 448
-        return ret
-
-    def primes_to_seconds(self, primes):
-        # primes - 1x3 vector or Nx3 array of vectors in prime basis coords
-        return np.dot(primes, np.linalg.inv(self.B))
-
-    def seconds_to_primes(self, seconds):
-        # seconds - 1x3 vector or Nx3 array of vectors in second basis coords
-        return np.dot(secs, self.B)
-
-    def simples_to_seconds(self, simples):
-        # simples - 1x3 vector or Nx3 array of vectors in simple basis coords
-        return self.primes_to_seconds(self.simples_to_primes(simples))
-
-    def seconds_to_simples(self, seconds):
-        # seconds - 1x3 vector or Nx3 array of vectors in second basis coords
-        return self.primes_to_simples(self.seconds_to_primes(seconds))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.social_distancing import BasisTransforms
 
 def populate_mouse_points(event, x, y, flags, param):
         # Used to mark 4 points on the frame zero of the video that will be warped
@@ -62,11 +25,11 @@ if __name__ == "__main__":
     primes = np.array([73, 260, -448], dtype=np.float32)
     secs = np.array([0, 0, 523.1], dtype=np.float32)
 
-    basis = Basis()
+    basistransform = BasisTransforms()
     mouse_pts = []
 
-    # print(basis.simples_to_seconds(simples))
-    # print(basis.seconds_to_simples(secs))
+    # print(basistransform.simples_to_seconds(simples))
+    # print(basistransform.seconds_to_simples(secs))
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -130,7 +93,8 @@ if __name__ == "__main__":
                             [40, 303, 0],
                             [71, 303, 0],
                             [82.5, 303, 0]], dtype=np.float32)
-    worldPoints = basis.simples_to_seconds(worldPoints)
+    # worldPoints = basistransform.simples_to_seconds(worldPoints)
+
 
     # MANUALLY INPUT THE DETECTED IMAGE COORDINATES HERE
 
@@ -255,6 +219,7 @@ if __name__ == "__main__":
         print("//-- suv1")
         print(suv1, end="\n"+"-"*70+"\n")
         s = suv1[2, 0]
+        pdb.set_trace()
         uv1 = suv1/s
         print(">==> uv1 - Image Points")
         print(uv1, end="\n"+"-"*70+"\n")

@@ -85,11 +85,12 @@ def detect(save_img=False):
         view_img = True
         # set True to speed up constant image size inference
         torch.backends.cudnn.benchmark = True
-        raise NotImplementedError("Webcam not supported for Social Distancing ES yet") 
+        if opt.command == 'socialdistancing':
+            raise NotImplementedError("Webcam not supported for Social Distancing ES yet") 
         dataset = LoadStreams(source, img_size=img_size, social_distancing=social_distancing, auto_perspective=auto_perspective)
     else:
         save_img = True
-        dataset = LoadImages(source, img_size=img_size, social_distancing=social_distancing, auto_perspective=auto_perspective)
+        dataset = LoadImages(source, img_size=img_size, social_distancing=social_distancing, auto_perspective=auto_perspective, mock=opt.mock)
     vid_path, vid_writer = "", None
     bird_vid_path, bird_vid_writer = None, None
 
@@ -105,9 +106,9 @@ def detect(save_img=False):
               ) if device.type != 'cpu' else None  # run once
     for path, img, im0s, vid_cap in dataset:
         if social_distancing:
-            if dataset.video_flag and dataset.frame == 1:
+            if (dataset.mode == 'video' and dataset.frame == 1) or (dataset.mode == 'images' and dataset.count == 1):
                 # Init social distancing obj
-                sds = SocialDistancingSystem(dataset, opt.bird_scale, camera_calibration_dir=camera_params)
+                sds = SocialDistancingSystem(dataset, opt.bird_scale, camera_calibration_dir=camera_params, mock=opt.mock)
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -257,6 +258,7 @@ if __name__ == '__main__':
     sd_parser.add_argument('--separate', action="store_true", help='Separate videos with detection and bird\'s eye view')
     sd_parser.add_argument('--bird-scale', nargs=2, type=float, default=[0.6, 2], help='Scale for bird\'s eye view video (w,h)')
     sd_parser.add_argument('--camera-params', help='Directory with camera parameters for automatic bird\'s eye view')
+    sd_parser.add_argument('--mock', action='store_true', help='Mock mouse points for social dist init and detections')
     opt = parser.parse_args()
     print(opt)
 

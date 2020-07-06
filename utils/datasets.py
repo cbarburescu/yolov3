@@ -1,6 +1,7 @@
 import glob
 import math
 import os
+import pdb
 import random
 import shutil
 import time
@@ -10,11 +11,11 @@ from threading import Thread
 import cv2
 import numpy as np
 import torch
-from PIL import Image, ExifTags
+from PIL import ExifTags, Image
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from utils.utils import xyxy2xywh, xywh2xyxy
+from utils.utils import xywh2xyxy, xyxy2xywh
 
 help_url = 'https://github.com/ultralytics/yolov3/wiki/Train-Custom-Data'
 img_formats = ['.bmp', '.jpg', '.jpeg', '.png', '.tif', '.dng']
@@ -42,7 +43,7 @@ def exif_size(img):
 
 
 class LoadImages:  # for inference
-    def __init__(self, path, img_size=416, social_distancing=False, auto_perspective=False):
+    def __init__(self, path, img_size=416, social_distancing=False, auto_perspective=False, mock=None):
         path = str(Path(path))  # os-agnostic
         files = []
         if os.path.isdir(path):
@@ -70,6 +71,8 @@ class LoadImages:  # for inference
             self.cap = None
         assert self.nF > 0, 'No images or videos found in ' + path
 
+        self.mock = mock
+
     def __iter__(self):
         self.count = 0
         return self
@@ -93,23 +96,8 @@ class LoadImages:  # for inference
                     self.new_video(path)
                     ret_val, img0 = self.cap.read()
 
-            if self.frame == 0 and self.social_distancing and not self.auto_perspective:
-                self.init_image = img0
-                
-                # cv2.namedWindow("Draw")
-                # cv2.setMouseCallback("Draw", self.populate_mouse_points)
-                # while True:
-                #     cv2.imshow("Draw", self.init_image)
-                #     cv2.waitKey(1)
-                #     if len(self.mouse_pts) == 7:
-                #         cv2.destroyWindow("Draw")
-                #         break
-
-                self.mouse_pts = [(740, 1), (1247, 2), (1106, 692), (75, 402), (716, 193), (721, 369)]
-                
             self.frame += 1
-            print('video %g/%g (%g/%g) %s: ' % (self.count + 1,
-                                                self.nF, self.frame, self.nframes, path), end='')
+            print('video %g/%g (%g/%g) %s: ' % (self.count + 1, self.nF, self.frame, self.nframes, path), end='')
 
         else:
             # Read image
@@ -117,6 +105,33 @@ class LoadImages:  # for inference
             img0 = cv2.imread(path)  # BGR
             assert img0 is not None, 'Image Not Found ' + path
             print('image %g/%g %s: ' % (self.count, self.nF, path), end='')
+
+        if self.social_distancing and (self.mode == 'video' and self.frame == 1 or self.count == 1):
+                self.init_image = img0
+                self.set_dataset_meta()
+
+                if not self.auto_perspective:
+                    if self.mock:
+                        mock_mouse_pts = {
+                            "test_arin_dist_big.mp4": [(122, 315), (1416, 7), (1748, 783), (188, 1076), (153, 407), (408, 906)],
+                            "perspective_calibration_balcony.jpeg": [(331, 402), (1232, 331), (1547, 906), (266, 1094), (151, 341), (378, 672)],
+                            "vid_short.mp4": [(740, 1), (1247, 2), (1106, 692), (75, 402), (716, 193), (721, 369)],
+                        }
+                        file = os.path.basename(path)
+                        if file in mock_mouse_pts.keys():
+                            self.mouse_pts = mock_mouse_pts[file]
+                        else:
+                            self.mock = False
+                    if not self.mock:
+                        cv2.namedWindow("Draw")
+                        cv2.setMouseCallback("Draw", self.populate_mouse_points)
+                        while True:
+                            cv2.imshow("Draw", self.init_image)
+                            cv2.waitKey(1)
+                            if len(self.mouse_pts) == 7:
+                                cv2.destroyWindow("Draw")
+                                break
+
 
         # Padded resize
         img = letterbox(img0, new_shape=self.img_size)[0]
@@ -132,9 +147,11 @@ class LoadImages:  # for inference
         self.frame = 0
         self.cap = cv2.VideoCapture(path)
         self.nframes = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
-        self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    def set_dataset_meta(self):
+        self.frame = self.count if self.cap is None else self.frame
+        self.h, self.w, _ = self.init_image.shape
+        self.fps = 1 if self.cap is None else self.cap.get(cv2.CAP_PROP_FPS)
 
     def populate_mouse_points(self, event, x, y, flags, param):
         # Used to mark 4 points on the frame zero of the video that will be warped
