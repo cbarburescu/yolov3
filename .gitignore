@@ -20,7 +20,7 @@
 *.data
 *.json
 
-!calibration/images*
+!calibration/images/*/*
 !videos/*
 
 *.cfg
