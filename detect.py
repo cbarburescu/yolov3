@@ -96,8 +96,11 @@ def detect(save_img=False):
 
     # Get names and colors
     names = load_classes(opt.names)
-    colors = [[random.randint(0, 255) for _ in range(3)]
-                              for _ in range(len(names))]
+    if len(names) == 1 and names[0] == 'person':
+        colors = [[194, 33, 12]]
+    else:
+        colors = [[random.randint(0, 255) for _ in range(3)]
+                                  for _ in range(len(names))]
 
     # Run inference
     t0 = time.time()
@@ -163,7 +166,7 @@ def detect(save_img=False):
 
                     if save_img or view_img:  # Add bbox to image
                         label = '%s %.2f' % (names[int(cls)], conf)
-                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
+                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
 
                 # Filter boxes with people
                 # pdb.set_trace()
@@ -203,7 +206,7 @@ def detect(save_img=False):
                 if dataset.mode == 'images':
                     cv2.imwrite(save_path, im0)
                 else:
-                    if not getattr(opt, "separate", False):
+                    if social_distancing and not getattr(opt, "separate", False):
                         if vid_path != save_path:  # new video
                             vid_path = save_path
                             if isinstance(vid_writer, cv2.VideoWriter):
@@ -219,7 +222,8 @@ def detect(save_img=False):
 
                             if social_distancing:
                                 bird_vid_path = "_bird".join(os.path.splitext(save_path))
-                                bird_vid_writer = release_init_writer(bird_vid_path, bird_vid_writer, dataset.fps, opt.fourcc, int((dataset.w*sds.scale_w)), int((dataset.h*sds.scale_h)))
+                                bird_vid_writer_shape = sds.bird_scaler.scale((dataset.w, dataset.h), coll=tuple, type_=int)
+                                bird_vid_writer = release_init_writer(bird_vid_path, bird_vid_writer, dataset.fps, opt.fourcc, *bird_vid_writer_shape)
 
                         vid_writer.write(im0)
                         if social_distancing:

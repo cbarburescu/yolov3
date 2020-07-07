@@ -2,6 +2,7 @@ import cv2
 import os
 import numpy as np
 import pdb
+from warnings import warn
 
 from scipy.spatial.distance import pdist, squareform
 
@@ -47,12 +48,34 @@ class BasisTransforms:
         return self.primes_to_simples(self.seconds_to_primes(seconds))
 
 
-# class ScaleTransforms:
-#     def __init__(self, cam_shape=(1201, 1600), perspective_shape=(1201, 1600), roi_shape):
-#         # h, w for all shapes
+class ScaleTransform:
+    def __init__(self, src, dst):
+        # w, h - all shapes
+        assert len(src) == 2, 'src must be a collection of length 2 in the form (w, h)'
+        assert len(dst) == 2, 'dst must be a collection of length 2 in the form (w, h)'
 
+        if src[0] < src[1]:
+            pdb.set_trace()
+            warn('The width is smaller than the height for src, double check if you passed the src shape in the form of (w, h)', category=UserWarning, stacklevel=3)
+        if dst[0] < dst[1]:
+            warn('The width is smaller than the height for dst, double check if you passed the dst shape in the form of (w, h)', category=UserWarning, stacklevel=3)
 
+        self.src = src
+        self.dst = dst
 
+    def scale(self, coords, coll=tuple, type_=float):
+        # w, h - coords
+        new_w = type_(coords[0] * self.dst[0] / self.src[0])
+        new_h = type_(coords[1] * self.dst[1] / self.src[1])
+
+        return coll((new_w, new_h))
+
+    def unscale(self, coords, coll=tuple, type_=float):
+        # w, h - coords
+        new_w = type_(coords[0] * self.src[0] / self.dst[0])
+        new_h = type_(coords[1] * self.src[1] / self.dst[1])
+
+        return coll((new_w, new_h))
 
 
 class SocialDistancingSystem:
@@ -69,10 +92,10 @@ class SocialDistancingSystem:
         self.pairs = 0
         self.sh_index = 1
         self.sc_index = 1
-        self.scale_w, self.scale_h = scale_bird
         self.camera_calibration_dir = camera_calibration_dir
         self.auto_perspective = camera_calibration_dir is not None
         self.dataset = dataset
+        self.bird_scaler = ScaleTransform(src=(1, 1), dst=scale_bird)
         self.mock = mock
 
         self.person_color = (194, 33, 12)
@@ -88,8 +111,9 @@ class SocialDistancingSystem:
             # self.scale_cx = self.dataset.w / 1600 
             # self.scale_cy = self.dataset.h / 1201
 
-            self.scale_cx = 1600 / self.dataset.w 
-            self.scale_cy = 1201 / self.dataset.h
+            self.c_scaler = ScaleTransform(src=(self.dataset.w, self.dataset.h), dst=(1600, 1201))
+            # self.scale_cx = 1600 / self.dataset.w 
+            # self.scale_cy = 1201 / self.dataset.h
 
             # self.scale_cx = 1 
             # self.scale_cy = 1
@@ -144,16 +168,17 @@ class SocialDistancingSystem:
         max_y = max([p[1] for p in self.roi])
         # max_y *= 1.2
 
-        self.scale_roi_w = w / max_x
-        self.scale_roi_h = h / max_y
+        # self.scale_roi_w = w / max_x
+        # self.scale_roi_h = h / max_y
+
+        self.roi_scaler = ScaleTransform(src=(max_x, max_y), dst=(w, h))
 
         # self.scale_roi_w = 1
         # self.scale_roi_h = 1
 
         # pdb.set_trace()
 
-        self.roi = np.array(self.roi)
-        self.roi = self.roi.astype(np.int32)
+        self.roi = np.array(self.roi, dtype=np.int32)
 
         # self.roi[:,[0, 1]] = self.roi[:,[1, 0]]
 
@@ -178,8 +203,10 @@ class SocialDistancingSystem:
 
     def image_to_realworld(self, src):
         if self.auto_perspective:
-            src[..., 0] *= self.scale_cx
-            src[... ,1] *= self.scale_cy
+            # src[..., 0] *= self.scale_cx
+            # src[... ,1] *= self.scale_cy
+            points = np.squeeze(src)
+            points = self.c_scaler.scale(points, coll=np.float32)
             points = np.expand_dims(np.append(src, 1), axis=0)  # [[u, v , 1]]
             uv_1 = np.array(points, dtype=np.float32)
             uv_1 = uv_1.T
@@ -222,8 +249,10 @@ class SocialDistancingSystem:
         thickness_node = 20
         solid_back_color = (10, 10, 10)
 
+
         self.bird_im = np.zeros(
-            (int(frame_h * self.scale_h), int(frame_w * self.scale_w), 3), np.uint8
+            self.bird_scaler.scale((frame_w, frame_h), coll=list, type_=int)[::-1] + [3],
+            np.uint8
         )
 
         # pdb.set_trace()
@@ -284,14 +313,16 @@ class SocialDistancingSystem:
             )
 
             warped_pt = self.image_to_realworld(detections[i])
-            warped_pt_scaled = [int(warped_pt[0] * self.scale_w),
-                                int(warped_pt[1] * self.scale_h)]
+            warped_pt_scaled = self.bird_scaler.scale(warped_pt, coll=tuple, type_=int)
+            # warped_pt_scaled = (int(warped_pt[0] * self.scale_w),
+            #                     int(warped_pt[1] * self.scale_h)])
 
             if self.auto_perspective:
-                warped_pt_scaled[0] *= self.scale_roi_w
-                warped_pt_scaled[1] *= self.scale_roi_h
+                warped_pt_scaled = self.roi_scaler.scale(warped_pt_scaled, coll=tuple, type_=int)
+                # warped_pt_scaled[0] *= self.scale_roi_w
+                # warped_pt_scaled[1] *= self.scale_roi_h
 
-            warped_pt_scaled = tuple([int(c) for c in warped_pt_scaled])
+            # warped_pt_scaled = tuple([int(c) for c in warped_pt_scaled])
             self.warped_pts.append(warped_pt_scaled)
             cv2.circle(
                 self.bird_im,
@@ -326,9 +357,11 @@ class SocialDistancingSystem:
         # pdb.set_trace()
         points = np.array(self.warped_pts, dtype=np.float64)
         if self.auto_perspective:
-            points[:, 0] /= self.scale_roi_w 
-            points[:, 1] /= self.scale_roi_h
-        points = points.astype(np.int32)
+            for i in range(points.shape[0]):
+                points[i] = self.roi_scaler.unscale(points[i], coll=np.int32)
+            # points[:, 0] /= self.scale_roi_w 
+            # points[:, 1] /= self.scale_roi_h
+        # points = points.astype(np.int32)
         dist_condensed = pdist(points)
         dist = squareform(dist_condensed)
 
@@ -340,9 +373,11 @@ class SocialDistancingSystem:
 
         points = points.astype(np.float64)
         if self.auto_perspective:
-            points[:, 0] *= self.scale_roi_w 
-            points[:, 1] *= self.scale_roi_h
-        points = points.astype(np.int32)
+            for i in range(points.shape[0]):
+                points[i] = self.roi_scaler.scale(points[i], coll=np.int32)
+            # points[:, 0] *= self.scale_roi_w 
+            # points[:, 1] *= self.scale_roi_h
+        # points = points.astype(np.int32)
 
         lineThickness = 4
         # All lines - green

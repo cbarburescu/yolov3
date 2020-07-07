@@ -416,14 +416,14 @@ class SocialDistancingSystem:
         self.put_text(frame, text, text_offset_y=last_h)
 
     def merge_ims(self, frame):
-        # if self.auto_perspective:
-        #     cv2.circle(
-        #         frame,
-        #         (int(self.newcam_mtx[0,2]), int(self.newcam_mtx[1,2])),
-        #         10,
-        #         (0, 255, 0),
-        #         20,
-        #     )
+        if self.auto_perspective:
+            cv2.circle(
+                frame,
+                (int(self.newcam_mtx[0,2]), int(self.newcam_mtx[1,2])),
+                10,
+                (0, 255, 0),
+                20,
+            )
 
         return np.concatenate((frame, self.bird_im), axis=0)
 

@@ -113,7 +113,7 @@ class LoadImages:  # for inference
                 if not self.auto_perspective:
                     if self.mock:
                         mock_mouse_pts = {
-                            "test_arin_dist_big.mp4": [(122, 315), (1416, 7), (1748, 783), (188, 1076), (153, 407), (408, 906)],
+                            "test_arin_dist_big.mp4": [(113, 344), (1400, 26), (1734, 618), (184, 1076), (137, 424), (429, 902)],
                             "perspective_calibration_balcony.jpeg": [(331, 402), (1232, 331), (1547, 906), (266, 1094), (151, 341), (378, 672)],
                             "vid_short.mp4": [(740, 1), (1247, 2), (1106, 692), (75, 402), (716, 193), (721, 369)],
                         }

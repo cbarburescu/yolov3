@@ -3,13 +3,15 @@
 import argparse
 import glob
 import os
+import pdb
 import sys
 
 import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.social_distancing import BasisTransforms
+from utils.social_distancing import BasisTransforms, ScaleTransform
+
 
 def populate_mouse_points(event, x, y, flags, param):
         # Used to mark 4 points on the frame zero of the video that will be warped
@@ -36,12 +38,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--calibration-image", default="images/perspective/perspective_calibration_balcony2.jpeg", help="image to test calibration")
     parser.add_argument("--save-dir", default=os.path.join(script_dir, "camera_params"), help="dir with camera calibration parameters")
-    parser.add_argument("--scale", nargs=2, default=[2.89, 2.8909242298084927], help="scale up w, h from camera calibration images to perspective calibration image size")
+    parser.add_argument("--cam-shape", nargs=2, default=[1600, 1201], type=float, help="w, h from camera calibration images")
     parser.add_argument("--draw-points", action="store_true", help="Draw mouse points for calibration")
     parser.add_argument("--dry-run", action="store_true", help="Do not write new perspective params in --save-dir")
     opt = parser.parse_args()
 
     # test camera calibration against all points, calculating XYZ
+    # load perspective calibration images
+    calibration_image = cv2.imread(opt.calibration_image)
+    h, w, _ = calibration_image.shape
 
     # load camera calibration
     cam_mtx = np.load(os.path.join(opt.save_dir, 'cam_mtx.npy'))
@@ -51,13 +56,14 @@ if __name__ == "__main__":
 
 
     # load center points from New Camera matrix
-    cx = newcam_mtx[0, 2] * opt.scale[0]
-    cy = newcam_mtx[1, 2] * opt.scale[1]
+    c_scaler = ScaleTransform(src=opt.cam_shape, dst=(w, h))
+    cx, cy = c_scaler.scale((newcam_mtx[0, 2], newcam_mtx[1, 2]))
+    # cx = newcam_mtx[0, 2] * w / opt.cam_shape[0]
+    # cy = newcam_mtx[1, 2] * h / opt.cam_shape[1]
     fx = newcam_mtx[0, 0]
     fy = newcam_mtx[1, 1]
     print("cx: "+str(cx)+",cy "+str(cy)+",fx "+str(fx))
 
-    calibration_image = cv2.imread(opt.calibration_image)
 
     print(cx, cy)
     print(fx, fy)
@@ -80,19 +86,29 @@ if __name__ == "__main__":
     # world center + 9 world points
 
 
-    X_center = 73  # 184.93
-    Y_center = 260 # 115.0
-    Z_center = 0
+    X_center = 75  # 184.93
+    Y_center = 255 # 115.0
+    Z_center = 523.1
     worldPoints = np.array([[X_center, Y_center, Z_center],
-                            [40, 241, 0],
-                            [71, 241, 0],
-                            [82.5, 241, 0],
-                            [40, 272, 0],
-                            [71, 272, 0],
-                            [82.5, 272, 0],
-                            [40, 303, 0],
-                            [71, 303, 0],
-                            [82.5, 303, 0]], dtype=np.float32)
+                            [40, 241, 448],
+                            [71, 241, 448],
+                            [102.5, 241, 448],
+                            [40, 272, 448],
+                            [71, 272, 448],
+                            [102.5, 272, 448],
+                            [40, 303, 448],
+                            [71, 303, 448],
+                            [102.5, 303, 448]], dtype=np.float32)
+    # worldPoints = np.array([[X_center, Y_center, Z_center],
+    #                         [102.5, 303, 523.1],
+    #                         [71, 303, 523.1],
+    #                         [40, 303, 523.1],
+    #                         [102.5, 272, 523.1],
+    #                         [71, 272, 523.1],
+    #                         [40, 272, 523.1],
+    #                         [102.5, 241, 523.1],
+    #                         [71, 241, 523.1],
+    #                         [40, 241, 523.1]], dtype=np.float32)
     # worldPoints = basistransform.simples_to_seconds(worldPoints)
 
 
@@ -115,15 +131,15 @@ if __name__ == "__main__":
         imagePoints = np.concatenate((imagePoints, mouse_pts), axis=0)
 
     else:
-        extraPoints = np.array([[502, 185],
-                                [700, 197],
-                                [894, 208],
-                                [491, 331],
-                                [695, 342],
-                                [896, 353],
-                                [478, 487],
-                                [691, 497],
-                                [900, 508]], dtype=np.float32)
+        extraPoints = np.array([(2088, 1889),
+                                (2284, 1870),
+                                (2481, 1855),
+                                (2068, 1724),
+                                (2260, 1712),
+                                (2449, 1688),
+                                (2051, 1572),
+                                (2235, 1562),
+                                (2420, 1545)], dtype=np.float32)
 
         imagePoints = np.concatenate((imagePoints, extraPoints), axis=0)
 
@@ -137,7 +153,7 @@ if __name__ == "__main__":
         # to center of camera
         wX = worldPoints[i, 0]-X_center
         wY = worldPoints[i, 1]-Y_center
-        wd = worldPoints[i, 2]
+        wd = np.sqrt(np.sum(np.power(worldPoints[i], 2)))
 
         d1 = np.sqrt(np.square(wX)+np.square(wY))
         wZ = np.sqrt(np.square(wd)-np.square(d1))
@@ -219,7 +235,7 @@ if __name__ == "__main__":
         print("//-- suv1")
         print(suv1, end="\n"+"-"*70+"\n")
         s = suv1[2, 0]
-        pdb.set_trace()
+        # pdb.set_trace()
         uv1 = suv1/s
         print(">==> uv1 - Image Points")
         print(uv1, end="\n"+"-"*70+"\n")
